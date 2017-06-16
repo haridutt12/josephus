@@ -1,3 +1,6 @@
+require 'thread'
+require 'java'
+# require 'pry'
 class Game
   def initialize
     raise NotImplementedError
@@ -14,31 +17,70 @@ end
 
 
 class Josephus < Game
-  attr_accessor :ring, :size, :k
-  def initialize(size, k)
+  attr_accessor :ring, :size, :k, :swords
+  def initialize(size, k, swords)
     @size = size
     @k = k
-    @ring = Ring.new(size)
-  end
+    @num_swords = swords.length
+    @ring = Ring.new(size, swords)
+    @mutex = Mutex.new
+    @threads = []
+   end
 
   def start
-    while @ring.num_alive > @k
-      @ring.sword_holder.kill(@ring.next_alive(@k))
-      @ring.sword_holder.pass(@ring.next_alive(@k))
+    @num_swords.times do |sword|
+      done = false
+      @threads << Thread.new {
+        until done
+          @mutex.synchronize  do
+            break if done
+            holder = @ring.sword_holder(sword+1)
+
+            candidate = @ring.candidate(@k, sword+1)
+            if holder == candidate
+              done = true
+              break
+            end
+
+            holder.kill(candidate)
+
+            candidate = @ring.candidate(@k, sword+1)
+            if holder == candidate
+              done = true
+              break
+            end
+
+            holder.pass(candidate)
+          end
+        end
+      }
     end
+
+    wait
+    output
+  end
+
+  def wait
+  @threads.each(&:join)
+  end
+
+  def output
     puts "last man standing #{@ring.all_alive}"
   end
-end
 
+end
 class Ring
   attr_reader :ring
 
-  def initialize(size)
+  def initialize(size, swords)
     @ring = []
     size.times do |i|
       @ring << Person.new(i)
     end
-    @ring.first.has_sword = true
+
+    swords.each.with_index(1) do |sword_position, sword_name|
+      @ring[sword_position].has_sword = sword_name
+    end
   end
 
   def num_alive
@@ -47,18 +89,21 @@ class Ring
     count
   end
 
-  def sword_holder
-    @ring.find { |p| p.has_sword == true }
+  def sword_holder(name)
+    @ring.find { |p| p.has_sword == name }
   end
 
-  def next_alive(k)
-    sword_holder_index = @ring.find_index(sword_holder)
+  def candidate(k, sword_name)
+    sword_holder_index = @ring.find_index(sword_holder(sword_name))
     num = 0
     index = sword_holder_index
     while num < k
       index = (index + 1) % @ring.length
-      num += 1 if @ring[index].is_alive
+      num += 1 if @ring[index].is_alive && @ring[index].has_sword == 0
+
+      break if index == sword_holder_index
     end
+    # $stderr.puts "sword_holder = #{sword_holder_index}, candidate = #{index}"
     @ring[index]
   end
 
@@ -73,7 +118,7 @@ class Person
 
   def initialize(name)
     @is_alive = true
-    @has_sword = false
+    @has_sword = 0
     @name = name
   end
 
@@ -83,13 +128,21 @@ class Person
   end
 
   def pass(person)
-    @has_sword = false
-    person.has_sword = true
+    person.has_sword = @has_sword
+    @has_sword = 0
   end
 end
 
 if __FILE__== $0
-josephus = Josephus.new(ARGV[0].to_i, ARGV[1].to_i)
-josephus.start
-game = Game.new()
+puts "enter no of person , steps , swords"
+p = gets.to_i
+s = gets.to_i
+sw = gets.to_i
+puts " enter the index on which u wanna place sword"
+swords = []
+sw.to_i.times do |i|
+  swords[i] = gets.to_i
+end
+
+process_game(Josephus.new(p, s, swords))
 end
